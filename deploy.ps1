@@ -219,10 +219,12 @@ $ecosystemPath = Join-Path $DEPLOY_DIR "ecosystem.config.cjs"
 [System.IO.File]::WriteAllText($ecosystemPath, $ecosystemContent, [System.Text.Encoding]::UTF8)
 Write-Ok "ecosystem.config.cjs created"
 
-pm2 delete drama-rank-web -ErrorAction SilentlyContinue 2>&1 | Out-Null
-pm2 delete drama-rank-scheduler -ErrorAction SilentlyContinue 2>&1 | Out-Null
-pm2 start $ecosystemPath
-pm2 save
+$ErrorActionPreference = "Continue"
+try { pm2 delete drama-rank-web 2>&1 | Out-Null } catch {}
+try { pm2 delete drama-rank-scheduler 2>&1 | Out-Null } catch {}
+pm2 start $ecosystemPath 2>&1 | Write-Host
+pm2 save 2>&1 | Write-Host
+$ErrorActionPreference = "Stop"
 Write-Ok "PM2 processes started"
 
 # Scheduled task for auto-start on boot
@@ -231,7 +233,6 @@ $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyConti
 if ($existingTask) {
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
 }
-$pm2Cmd = (Get-Command pm2).Source
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -Command `"pm2 resurrect`""
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
@@ -251,7 +252,8 @@ Write-Ok "Firewall rules added (port 80, 3000)"
 $serverIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -ne "127.0.0.1" -and $_.PrefixOrigin -ne "WellKnown" } | Select-Object -First 1).IPAddress
 if (-not $serverIP) { $serverIP = "localhost" }
 
-pm2 list
+$ErrorActionPreference = "Continue"
+pm2 list 2>&1 | Write-Host
 
 Write-Host ""
 Write-Host "==============================================" -ForegroundColor Green
