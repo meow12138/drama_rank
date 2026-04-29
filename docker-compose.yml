@@ -1,0 +1,16 @@
+version: "3.8"
+
+services:
+  drama-rank:
+    build: .
+    container_name: drama-rank
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=file:./prod.db
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    # Playwright needs additional shm memory
+    shm_size: 2gb
