@@ -1,260 +1,252 @@
-#Requires -RunAsAdministrator
-###############################################################################
-# drama-rank Windows 一键部署脚本 (PowerShell)
-#
-# 使用方法 (以管理员身份打开 PowerShell):
-#   Set-ExecutionPolicy Bypass -Scope Process -Force
-#   .\deploy.ps1
-#
-# 或者预设账号密码跳过交互:
-#   $env:AUTH_USER="admin"; $env:AUTH_PASS="mypass123"; .\deploy.ps1
-###############################################################################
+<#
+.SYNOPSIS
+  drama-rank Windows one-click deployment script
+.DESCRIPTION
+  Usage (run as Administrator):
+    Set-ExecutionPolicy Bypass -Scope Process -Force
+    .\deploy.ps1
+  Or pre-set credentials:
+    $env:AUTH_USER="admin"; $env:AUTH_PASS="mypass123"; .\deploy.ps1
+#>
 
 $ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-# ======================== 配置 ========================
-
-$DEPLOY_DIR = "C:\drama-rank"
-$REPO_URL = "https://github.com/meow12138/drama_rank.git"
-$NODE_VERSION = "20.18.1"
-$NPM_REGISTRY = "https://registry.npmmirror.com"
+$DEPLOY_DIR    = "C:\drama-rank"
+$REPO_URL      = "https://github.com/meow12138/drama_rank.git"
+$NODE_VERSION  = "20.18.1"
+$NPM_REGISTRY  = "https://registry.npmmirror.com"
 $PLAYWRIGHT_CDN = "https://npmmirror.com/mirrors/playwright/"
 
-# ======================== 工具函数 ========================
-
-function Write-Step($msg) { Write-Host "`n===== $msg =====`n" -ForegroundColor Cyan }
-function Write-Ok($msg)   { Write-Host "[ OK ] $msg" -ForegroundColor Green }
+function Write-Step($msg)  { Write-Host "`n===== $msg =====`n" -ForegroundColor Cyan }
+function Write-Ok($msg)    { Write-Host "[ OK ] $msg" -ForegroundColor Green }
 function Write-Info($msg)  { Write-Host "[INFO] $msg" -ForegroundColor Blue }
 function Write-Warn($msg)  { Write-Host "[WARN] $msg" -ForegroundColor Yellow }
 function Write-Err($msg)   { Write-Host "[FAIL] $msg" -ForegroundColor Red }
 
-# ======================== 0. 前置检查 ========================
+# ==================== 0. Check Admin ====================
 
-Write-Step "0/6 前置检查"
+Write-Step "0/6 Check prerequisites"
 
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
-    Write-Err "请以管理员身份运行 PowerShell"
+    Write-Err "Please run PowerShell as Administrator"
     exit 1
 }
-Write-Ok "管理员权限"
+Write-Ok "Administrator privileges confirmed"
 
-# ======================== 1. 安装 Git ========================
+# ==================== 1. Git ====================
 
-Write-Step "1/6 检查 Git"
+Write-Step "1/6 Check Git"
 
 if (Get-Command git -ErrorAction SilentlyContinue) {
-    Write-Ok "Git 已安装: $(git --version)"
+    Write-Ok "Git installed: $(git --version)"
 } else {
-    Write-Info "正在安装 Git..."
+    Write-Info "Installing Git via winget..."
     if (Get-Command winget -ErrorAction SilentlyContinue) {
         winget install --id Git.Git -e --accept-source-agreements --accept-package-agreements
     } else {
-        Write-Err "未检测到 Git，请手动安装: https://git-scm.com/download/win"
+        Write-Err "Git not found. Please install manually: https://git-scm.com/download/win"
         exit 1
     }
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
-    Write-Ok "Git 安装完成"
+    Write-Ok "Git installed"
 }
 
-# ======================== 2. 安装 Node.js ========================
+# ==================== 2. Node.js ====================
 
-Write-Step "2/6 安装 Node.js"
+Write-Step "2/6 Install Node.js"
 
+$needInstall = $true
 if (Get-Command node -ErrorAction SilentlyContinue) {
     $currentNode = (node -v)
     if ($currentNode -match "^v20\.") {
-        Write-Ok "Node.js $currentNode 已安装，跳过"
+        Write-Ok "Node.js $currentNode already installed, skip"
+        $needInstall = $false
     } else {
-        Write-Warn "当前 Node.js 版本 $currentNode，需要 v20.x"
-        Write-Info "正在安装 Node.js $NODE_VERSION..."
-        $nodeInstaller = "$env:TEMP\node-v${NODE_VERSION}-x64.msi"
-        Invoke-WebRequest -Uri "https://npmmirror.com/mirrors/node/v${NODE_VERSION}/node-v${NODE_VERSION}-x64.msi" -OutFile $nodeInstaller
-        Start-Process msiexec.exe -ArgumentList "/i", $nodeInstaller, "/qn", "/norestart" -Wait
-        Remove-Item $nodeInstaller -Force -ErrorAction SilentlyContinue
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
-        Write-Ok "Node.js 安装完成"
+        Write-Warn "Current Node.js is $currentNode, need v20.x"
     }
-} else {
-    Write-Info "正在从国内镜像下载 Node.js $NODE_VERSION..."
-    $nodeInstaller = "$env:TEMP\node-v${NODE_VERSION}-x64.msi"
-    Invoke-WebRequest -Uri "https://npmmirror.com/mirrors/node/v${NODE_VERSION}/node-v${NODE_VERSION}-x64.msi" -OutFile $nodeInstaller
+}
+
+if ($needInstall) {
+    Write-Info "Downloading Node.js $NODE_VERSION from China mirror..."
+    $nodeUrl = "https://npmmirror.com/mirrors/node/v${NODE_VERSION}/node-v${NODE_VERSION}-x64.msi"
+    $nodeInstaller = "$env:TEMP\nodejs.msi"
+    Invoke-WebRequest -Uri $nodeUrl -OutFile $nodeInstaller
+    Write-Info "Installing Node.js (silent)..."
     Start-Process msiexec.exe -ArgumentList "/i", $nodeInstaller, "/qn", "/norestart" -Wait
     Remove-Item $nodeInstaller -Force -ErrorAction SilentlyContinue
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
-    Write-Ok "Node.js 安装完成"
+    Write-Ok "Node.js installed"
 }
 
 Write-Ok "Node.js $(node -v)"
 Write-Ok "npm $(npm -v)"
 
 npm config set registry $NPM_REGISTRY
-Write-Ok "npm 镜像: $NPM_REGISTRY"
+Write-Ok "npm registry: $NPM_REGISTRY"
 
-# ======================== 3. 克隆/更新项目 ========================
+# ==================== 3. Clone project ====================
 
-Write-Step "3/6 部署项目代码"
+Write-Step "3/6 Deploy project code"
 
 if (Test-Path "$DEPLOY_DIR\.git") {
-    Write-Info "项目已存在，拉取最新代码..."
+    Write-Info "Project exists, pulling latest code..."
     Set-Location $DEPLOY_DIR
-    git fetch --all 2>$null
-    git reset --hard origin/main 2>$null
-    if ($LASTEXITCODE -ne 0) { git reset --hard origin/master 2>$null }
-    Write-Ok "代码已更新"
+    git fetch --all 2>&1 | Out-Null
+    git reset --hard origin/main 2>&1 | Out-Null
+    Write-Ok "Code updated"
 } else {
-    Write-Info "克隆仓库: $REPO_URL"
+    Write-Info "Cloning repo: $REPO_URL"
     if (Test-Path $DEPLOY_DIR) { Remove-Item $DEPLOY_DIR -Recurse -Force }
     git clone $REPO_URL $DEPLOY_DIR --depth 1
-    Write-Ok "代码克隆完成"
+    Write-Ok "Code cloned"
 }
 
 Set-Location $DEPLOY_DIR
 
-# ======================== 4. 环境变量 + 依赖 + 构建 ========================
+# ==================== 4. Env, deps, build ====================
 
-Write-Step "4/6 配置环境 & 构建项目"
+Write-Step "4/6 Configure env and build"
 
-$envFile = "$DEPLOY_DIR\.env"
+$envFile = Join-Path $DEPLOY_DIR ".env"
 
 if (-not (Test-Path $envFile)) {
     if (-not $env:AUTH_USER) {
-        $env:AUTH_USER = Read-Host "请输入后台用户名 (AUTH_USER)"
-        if (-not $env:AUTH_USER) { Write-Err "AUTH_USER 不能为空"; exit 1 }
+        $env:AUTH_USER = Read-Host "Enter AUTH_USER (web login username)"
+        if (-not $env:AUTH_USER) { Write-Err "AUTH_USER cannot be empty"; exit 1 }
     }
     if (-not $env:AUTH_PASS) {
-        $env:AUTH_PASS = Read-Host "请输入后台密码 (AUTH_PASS)"
-        if (-not $env:AUTH_PASS) { Write-Err "AUTH_PASS 不能为空"; exit 1 }
+        $env:AUTH_PASS = Read-Host "Enter AUTH_PASS (web login password)"
+        if (-not $env:AUTH_PASS) { Write-Err "AUTH_PASS cannot be empty"; exit 1 }
     }
 
-    @"
-DATABASE_URL="file:./prisma/dev.db"
-AUTH_USER="$($env:AUTH_USER)"
-AUTH_PASS="$($env:AUTH_PASS)"
-PLAYWRIGHT_DOWNLOAD_HOST="$PLAYWRIGHT_CDN"
-"@ | Set-Content -Path $envFile -Encoding UTF8
-
-    Write-Ok ".env 已创建"
+    $envContent = @(
+        "DATABASE_URL=""file:./prisma/dev.db"""
+        "AUTH_USER=""$($env:AUTH_USER)"""
+        "AUTH_PASS=""$($env:AUTH_PASS)"""
+        "PLAYWRIGHT_DOWNLOAD_HOST=""$PLAYWRIGHT_CDN"""
+    )
+    $envContent | Set-Content -Path $envFile -Encoding UTF8
+    Write-Ok ".env created"
 } else {
-    Write-Info ".env 已存在，保留现有配置"
+    Write-Info ".env already exists, keeping current config"
 }
 
-Write-Info "安装 npm 依赖 (使用国内镜像)..."
+Write-Info "Installing npm dependencies (China mirror)..."
 npm install --registry=$NPM_REGISTRY
-Write-Ok "npm 依赖已安装"
+Write-Ok "npm dependencies installed"
 
-Write-Info "生成 Prisma Client..."
+Write-Info "Generating Prisma Client..."
 npx prisma generate
-Write-Ok "Prisma Client 已生成"
+Write-Ok "Prisma Client generated"
 
-Write-Info "同步数据库..."
-npx prisma db push --accept-data-loss 2>$null
-if ($LASTEXITCODE -ne 0) { npx prisma db push }
-Write-Ok "数据库已就绪"
+Write-Info "Syncing database..."
+npx prisma db push --accept-data-loss
+Write-Ok "Database ready"
 
-Write-Info "构建 Next.js..."
+Write-Info "Building Next.js..."
 npm run build
-Write-Ok "项目构建完成"
+Write-Ok "Build complete"
 
-# ======================== 5. Playwright ========================
+# ==================== 5. Playwright ====================
 
-Write-Step "5/6 安装 Playwright Chromium"
+Write-Step "5/6 Install Playwright Chromium"
 
 $env:PLAYWRIGHT_DOWNLOAD_HOST = $PLAYWRIGHT_CDN
 
-Write-Info "下载 Chromium 浏览器..."
+Write-Info "Downloading Chromium browser..."
 npx playwright install chromium
-Write-Ok "Chromium 已安装"
+Write-Ok "Chromium installed"
 
-# ======================== 6. PM2 启动服务 ========================
+# ==================== 6. PM2 start ====================
 
-Write-Step "6/6 启动服务"
+Write-Step "6/6 Start services with PM2"
 
 if (-not (Get-Command pm2 -ErrorAction SilentlyContinue)) {
-    Write-Info "安装 PM2..."
+    Write-Info "Installing PM2..."
     npm install -g pm2 --registry=$NPM_REGISTRY
 }
 Write-Ok "PM2 $(pm2 -v)"
 
-$npmPath = (Get-Command npm).Source
+$logsDir = Join-Path $DEPLOY_DIR "logs"
+if (-not (Test-Path $logsDir)) { New-Item -ItemType Directory -Path $logsDir | Out-Null }
 
-if (-not (Test-Path "$DEPLOY_DIR\logs")) { New-Item -ItemType Directory -Path "$DEPLOY_DIR\logs" | Out-Null }
-
-$ecosystem = @"
+# Write ecosystem.config.cjs using .NET API to avoid PowerShell parsing issues
+$npmPath = ((Get-Command npm).Source) -replace '\\', '/'
+$deployDirUnix = $DEPLOY_DIR -replace '\\', '/'
+$ecosystemContent = @"
 module.exports = {
   apps: [
     {
       name: 'drama-rank-web',
-      cwd: '$($DEPLOY_DIR -replace '\\', '/')',
-      script: '$($npmPath -replace '\\', '/')',
+      cwd: '$deployDirUnix',
+      script: '$npmPath',
       args: 'run start',
       interpreter: 'none',
       env: {
         NODE_ENV: 'production',
-        PORT: 3000,
-        PLAYWRIGHT_DOWNLOAD_HOST: '$PLAYWRIGHT_CDN',
+        PORT: 3000
       },
-      env_file: '$($DEPLOY_DIR -replace '\\', '/')/.env',
       max_memory_restart: '512M',
       restart_delay: 5000,
       max_restarts: 10,
-      error_file: '$($DEPLOY_DIR -replace '\\', '/')/logs/web-error.log',
-      out_file: '$($DEPLOY_DIR -replace '\\', '/')/logs/web-out.log',
-      merge_logs: true,
+      error_file: '$deployDirUnix/logs/web-error.log',
+      out_file: '$deployDirUnix/logs/web-out.log',
+      merge_logs: true
     },
     {
       name: 'drama-rank-scheduler',
-      cwd: '$($DEPLOY_DIR -replace '\\', '/')',
-      script: '$($npmPath -replace '\\', '/')',
+      cwd: '$deployDirUnix',
+      script: '$npmPath',
       args: 'run scheduler',
       interpreter: 'none',
       env: {
-        NODE_ENV: 'production',
-        PLAYWRIGHT_DOWNLOAD_HOST: '$PLAYWRIGHT_CDN',
+        NODE_ENV: 'production'
       },
-      env_file: '$($DEPLOY_DIR -replace '\\', '/')/.env',
       max_memory_restart: '1G',
       restart_delay: 10000,
       max_restarts: 5,
-      error_file: '$($DEPLOY_DIR -replace '\\', '/')/logs/scheduler-error.log',
-      out_file: '$($DEPLOY_DIR -replace '\\', '/')/logs/scheduler-out.log',
-      merge_logs: true,
+      error_file: '$deployDirUnix/logs/scheduler-error.log',
+      out_file: '$deployDirUnix/logs/scheduler-out.log',
+      merge_logs: true
     }
   ]
 };
 "@
-$ecosystem | Set-Content -Path "$DEPLOY_DIR\ecosystem.config.cjs" -Encoding UTF8
 
-pm2 delete drama-rank-web 2>$null
-pm2 delete drama-rank-scheduler 2>$null
-pm2 start "$DEPLOY_DIR\ecosystem.config.cjs"
+$ecosystemPath = Join-Path $DEPLOY_DIR "ecosystem.config.cjs"
+[System.IO.File]::WriteAllText($ecosystemPath, $ecosystemContent, [System.Text.Encoding]::UTF8)
+Write-Ok "ecosystem.config.cjs created"
+
+pm2 delete drama-rank-web -ErrorAction SilentlyContinue 2>&1 | Out-Null
+pm2 delete drama-rank-scheduler -ErrorAction SilentlyContinue 2>&1 | Out-Null
+pm2 start $ecosystemPath
 pm2 save
+Write-Ok "PM2 processes started"
 
-Write-Ok "PM2 进程已启动"
-
-# 创建开机自启计划任务
+# Scheduled task for auto-start on boot
 $taskName = "DramaRankPM2"
 $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if ($existingTask) {
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
 }
-
-$pm2Path = (Get-Command pm2).Source
-$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -Command `"& '$pm2Path' resurrect`""
+$pm2Cmd = (Get-Command pm2).Source
+$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -Command `"pm2 resurrect`""
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Description "drama-rank PM2 开机自启" | Out-Null
-Write-Ok "开机自启已配置 (计划任务: $taskName)"
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Description "drama-rank PM2 auto start" | Out-Null
+Write-Ok "Auto-start on boot configured"
 
-# 配置 Windows 防火墙
-Write-Info "配置防火墙规则..."
+# Firewall rules
+Write-Info "Configuring firewall..."
 Remove-NetFirewallRule -DisplayName "DramaRank-Web" -ErrorAction SilentlyContinue
 New-NetFirewallRule -DisplayName "DramaRank-Web" -Direction Inbound -Protocol TCP -LocalPort 3000 -Action Allow | Out-Null
 Remove-NetFirewallRule -DisplayName "DramaRank-HTTP" -ErrorAction SilentlyContinue
 New-NetFirewallRule -DisplayName "DramaRank-HTTP" -Direction Inbound -Protocol TCP -LocalPort 80 -Action Allow | Out-Null
-Write-Ok "防火墙已放行 80 和 3000 端口"
+Write-Ok "Firewall rules added (port 80, 3000)"
 
-# ======================== 完成 ========================
+# ==================== Done ====================
 
 $serverIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -ne "127.0.0.1" -and $_.PrefixOrigin -ne "WellKnown" } | Select-Object -First 1).IPAddress
 if (-not $serverIP) { $serverIP = "localhost" }
@@ -263,18 +255,18 @@ pm2 list
 
 Write-Host ""
 Write-Host "==============================================" -ForegroundColor Green
-Write-Host "       drama-rank 部署成功!                   " -ForegroundColor Green
+Write-Host "       drama-rank deploy SUCCESS!             " -ForegroundColor Green
 Write-Host "==============================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "  访问地址:  http://${serverIP}:3000" -ForegroundColor Cyan
-Write-Host "  部署目录:  $DEPLOY_DIR" -ForegroundColor Cyan
-Write-Host "  Node.js:   $(node -v)" -ForegroundColor Cyan
+Write-Host "  URL:        http://${serverIP}:3000" -ForegroundColor Cyan
+Write-Host "  Deploy dir: $DEPLOY_DIR" -ForegroundColor Cyan
+Write-Host "  Node.js:    $(node -v)" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  常用命令:" -ForegroundColor Yellow
-Write-Host "    pm2 list                        查看进程"
-Write-Host "    pm2 logs drama-rank-web         查看 Web 日志"
-Write-Host "    pm2 logs drama-rank-scheduler   查看爬虫日志"
-Write-Host "    pm2 restart all                 重启所有服务"
+Write-Host "  Commands:" -ForegroundColor Yellow
+Write-Host "    pm2 list                        # check processes"
+Write-Host "    pm2 logs drama-rank-web         # web logs"
+Write-Host "    pm2 logs drama-rank-scheduler   # scheduler logs"
+Write-Host "    pm2 restart all                 # restart all"
 Write-Host ""
-Write-Host "  提醒: 请在阿里云安全组中放行 3000 端口!" -ForegroundColor Red
+Write-Host "  REMINDER: Open port 3000 in Alibaba Cloud Security Group!" -ForegroundColor Red
 Write-Host ""
